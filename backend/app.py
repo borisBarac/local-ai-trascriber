@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 import json
-from .transcribe import transcribe_audio_stream
+from transcribe import transcribe_audio_stream
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
