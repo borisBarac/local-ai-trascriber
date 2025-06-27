@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Text Demo</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 0 10px;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+
+        .status.connected {
+            color: #28a745;
+        }
+
+        .status.disconnected {
+            color: #dc3545;
+        }
+
+        .text-output {
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 300px;
+            max-height: 500px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+
+        .message {
+            margin-bottom: 8px;
+            padding: 5px;
+            border-left: 3px solid #007bff;
+            background-color: white;
+            border-radius: 0 5px 5px 0;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .end-message {
+            border-left-color: #dc3545;
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Real-time Streaming Text Demo</h1>
+
+        <div class="controls">
+            <button id="startBtn" onclick="startStream()">Start Stream</button>
+            <button id="stopBtn" onclick="stopStream()" disabled>Stop Stream</button>
+            <button id="clearBtn" onclick="clearOutput()">Clear Output</button>
+        </div>
+
+        <div id="status" class="status disconnected">Disconnected</div>
+
+        <div id="textOutput" class="text-output">
+            Click "Start Stream" to begin receiving real-time updates every 0.5 seconds...
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        let messageCount = 0;
+
+        function startStream() {
+            if (eventSource) {
+                return; // Already connected
+            }
+
+            // Create EventSource connection
+            eventSource = new EventSource('/stream');
+
+            // Update UI
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('status').textContent = 'Connecting...';
+            document.getElementById('status').className = 'status';
+
+            // Handle incoming messages
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    const output = document.getElementById('textOutput');
+
+                    // Create new message element
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = data.end ? 'message end-message' : 'message';
+                    messageDiv.textContent = data.text;
+
+                    // If this is the first message, clear the placeholder text
+                    if (messageCount === 0) {
+                        output.innerHTML = '';
+                    }
+
+                    // Append new message
+                    output.appendChild(messageDiv);
+                    messageCount++;
+
+                    // Auto-scroll to bottom
+                    output.scrollTop = output.scrollHeight;
+
+                    // If stream ended, stop automatically
+                    if (data.end) {
+                        setTimeout(() => {
+                            stopStream();
+                        }, 1000);
+                    }
+
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                }
+            };
+
+            // Handle connection opened
+            eventSource.onopen = function(event) {
+                document.getElementById('status').textContent = 'Connected - Streaming...';
+                document.getElementById('status').className = 'status connected';
+            };
+
+            // Handle errors
+            eventSource.onerror = function(event) {
+                console.error('EventSource failed:', event);
+                document.getElementById('status').textContent = 'Connection Error';
+                document.getElementById('status').className = 'status disconnected';
+                stopStream();
+            };
+        }
+
+        function stopStream() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+
+            // Update UI
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('status').textContent = 'Disconnected';
+            document.getElementById('status').className = 'status disconnected';
+        }
+
+        function clearOutput() {
+            document.getElementById('textOutput').innerHTML = 'Click "Start Stream" to begin receiving real-time updates every 0.5 seconds...';
+            messageCount = 0;
+        }
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', function() {
+            if (eventSource) {
+                eventSource.close();
+            }
+        });
+    </script>
+</body>
+</html>
