@@ -1,12 +1,18 @@
 import asyncio
 import time
-from fastapi import FastAPI, Request
+import os
+import shutil
+from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 import json
+from .transcribe import transcribe_audio_stream
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+UPLOAD_DIR = "temp_audio"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -14,43 +20,25 @@ async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
-@app.get("/stream")
-async def stream_text():
-    async def generate_text():
-        sample_texts = [
-            "Hello, this is streaming text!",
-            "New message every 0.5 seconds...",
-            "Real-time updates working perfectly!",
-            "FastAPI streaming is awesome!",
-            "Server-Sent Events in action!",
-            "More text coming your way...",
-            "This is message number 7",
-            "Keep watching for more updates!",
-            "Almost there with the demo...",
-            "Final streaming message!",
-        ]
+@app.post("/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
-        for i, text in enumerate(sample_texts):
-            # Format as Server-Sent Events
-            timestamp = time.strftime("%H:%M:%S")
-            message = f"[{timestamp}] {text}"
-
-            # SSE format: data: {content}\n\n
-            yield f"data: {json.dumps({'text': message, 'id': i})}\n\n"
-
-            # Wait 0.5 seconds before next message
-            await asyncio.sleep(0.5)
-
-        # Send end signal
+    async def stream_transcription():
+        async for text_chunk in transcribe_audio_stream(file_path):
+            yield f"data: {json.dumps({'text': text_chunk})}\n\n"
         yield f"data: {json.dumps({'text': '[STREAM ENDED]', 'end': True})}\n\n"
+        # Clean up the uploaded file
+        os.remove(file_path)
 
     return StreamingResponse(
-        generate_text(),
-        media_type="text/plain",
+        stream_transcription(),
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
         },
     )
 

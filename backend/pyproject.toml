@@ -13,5 +13,8 @@ dependencies = [
     "jinja2",
     "python-multipart",
     "httpx",
-
+    "transformers",
+    "torch",
+    "ffmpeg-python",
+    "numpy"
 ]

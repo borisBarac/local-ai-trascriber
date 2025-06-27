@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Streaming Text Demo</title>
+    <title>Audio Transcription Demo</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -12,25 +12,21 @@
             padding: 20px;
             background-color: #f5f5f5;
         }
-
         .container {
             background: white;
             border-radius: 10px;
             padding: 30px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-
         h1 {
             color: #333;
             text-align: center;
             margin-bottom: 30px;
         }
-
         .controls {
             text-align: center;
             margin-bottom: 20px;
         }
-
         button {
             background-color: #007bff;
             color: white;
@@ -41,30 +37,24 @@
             font-size: 16px;
             margin: 0 10px;
         }
-
         button:hover {
             background-color: #0056b3;
         }
-
         button:disabled {
             background-color: #ccc;
             cursor: not-allowed;
         }
-
         .status {
             text-align: center;
             margin: 10px 0;
             font-weight: bold;
         }
-
         .status.connected {
             color: #28a745;
         }
-
         .status.disconnected {
             color: #dc3545;
         }
-
         .text-output {
             border: 2px solid #ddd;
             border-radius: 8px;
@@ -77,7 +67,6 @@
             white-space: pre-wrap;
             line-height: 1.5;
         }
-
         .message {
             margin-bottom: 8px;
             padding: 5px;
@@ -86,102 +75,119 @@
             border-radius: 0 5px 5px 0;
             animation: fadeIn 0.3s ease-in;
         }
-
         @keyframes fadeIn {
             from { opacity: 0; transform: translateX(-10px); }
             to { opacity: 1; transform: translateX(0); }
         }
-
         .end-message {
             border-left-color: #dc3545;
             background-color: #f8d7da;
             color: #721c24;
         }
+        .upload-area {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        input[type="file"] {
+            margin-right: 10px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Real-time Streaming Text Demo</h1>
+        <h1>🚀 Audio File Transcription</h1>
 
-        <div class="controls">
-            <button id="startBtn" onclick="startStream()">Start Stream</button>
-            <button id="stopBtn" onclick="stopStream()" disabled>Stop Stream</button>
-            <button id="clearBtn" onclick="clearOutput()">Clear Output</button>
+        <div class="upload-area">
+            <input type="file" id="audioFileInput" accept="audio/mp4, video/mp4">
+            <button id="transcribeBtn" onclick="transcribeAudio()">Transcribe</button>
         </div>
 
-        <div id="status" class="status disconnected">Disconnected</div>
+        <div id="status" class="status disconnected">Ready</div>
 
         <div id="textOutput" class="text-output">
-            Click "Start Stream" to begin receiving real-time updates every 0.5 seconds...
+            Select an MP4 audio file and click "Transcribe" to begin.
+        </div>
+         <div class="controls">
+            <button id="clearBtn" onclick="clearOutput()">Clear Output</button>
         </div>
     </div>
 
     <script>
         let eventSource = null;
-        let messageCount = 0;
 
-        function startStream() {
-            if (eventSource) {
-                return; // Already connected
+        function transcribeAudio() {
+            const fileInput = document.getElementById('audioFileInput');
+            const file = fileInput.files[0];
+            const transcribeBtn = document.getElementById('transcribeBtn');
+            const statusDiv = document.getElementById('status');
+            const outputDiv = document.getElementById('textOutput');
+
+            if (!file) {
+                alert("Please select a file first.");
+                return;
             }
 
-            // Create EventSource connection
-            eventSource = new EventSource('/stream');
+            if (eventSource) {
+                eventSource.close();
+            }
 
-            // Update UI
-            document.getElementById('startBtn').disabled = true;
-            document.getElementById('stopBtn').disabled = false;
-            document.getElementById('status').textContent = 'Connecting...';
-            document.getElementById('status').className = 'status';
+            const formData = new FormData();
+            formData.append("file", file);
 
-            // Handle incoming messages
-            eventSource.onmessage = function(event) {
-                try {
-                    const data = JSON.parse(event.data);
-                    const output = document.getElementById('textOutput');
+            transcribeBtn.disabled = true;
+            statusDiv.textContent = 'Uploading and processing...';
+            statusDiv.className = 'status';
+            outputDiv.innerHTML = '';
 
-                    // Create new message element
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = data.end ? 'message end-message' : 'message';
-                    messageDiv.textContent = data.text;
+            fetch('/transcribe', {
+                method: 'POST',
+                body: formData,
+            })
+            .then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                statusDiv.textContent = 'Transcribing...';
+                statusDiv.className = 'status connected';
 
-                    // If this is the first message, clear the placeholder text
-                    if (messageCount === 0) {
-                        output.innerHTML = '';
-                    }
+                function push() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            statusDiv.textContent = 'Transcription complete.';
+                            statusDiv.className = 'status disconnected';
+                            transcribeBtn.disabled = false;
+                            return;
+                        }
 
-                    // Append new message
-                    output.appendChild(messageDiv);
-                    messageCount++;
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\\n\\n');
 
-                    // Auto-scroll to bottom
-                    output.scrollTop = output.scrollHeight;
-
-                    // If stream ended, stop automatically
-                    if (data.end) {
-                        setTimeout(() => {
-                            stopStream();
-                        }, 1000);
-                    }
-
-                } catch (error) {
-                    console.error('Error parsing message:', error);
+                        lines.forEach(line => {
+                            if (line.startsWith('data:')) {
+                                const data = JSON.parse(line.substring(5));
+                                if (data.end) {
+                                    const messageDiv = document.createElement('div');
+                                    messageDiv.className = 'message end-message';
+                                    messageDiv.textContent = data.text;
+                                    outputDiv.appendChild(messageDiv);
+                                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                                    stopStream();
+                                } else {
+                                    outputDiv.textContent += data.text;
+                                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                                }
+                            }
+                        });
+                        push();
+                    });
                 }
-            };
-
-            // Handle connection opened
-            eventSource.onopen = function(event) {
-                document.getElementById('status').textContent = 'Connected - Streaming...';
-                document.getElementById('status').className = 'status connected';
-            };
-
-            // Handle errors
-            eventSource.onerror = function(event) {
-                console.error('EventSource failed:', event);
-                document.getElementById('status').textContent = 'Connection Error';
-                document.getElementById('status').className = 'status disconnected';
-                stopStream();
-            };
+                push();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                statusDiv.textContent = 'Error during transcription.';
+                statusDiv.className = 'status disconnected';
+                transcribeBtn.disabled = false;
+            });
         }
 
         function stopStream() {
@@ -189,20 +195,17 @@
                 eventSource.close();
                 eventSource = null;
             }
-
-            // Update UI
-            document.getElementById('startBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
-            document.getElementById('status').textContent = 'Disconnected';
-            document.getElementById('status').className = 'status disconnected';
+            const transcribeBtn = document.getElementById('transcribeBtn');
+            const statusDiv = document.getElementById('status');
+            transcribeBtn.disabled = false;
+            statusDiv.textContent = 'Ready';
+            statusDiv.className = 'status disconnected';
         }
 
         function clearOutput() {
-            document.getElementById('textOutput').innerHTML = 'Click "Start Stream" to begin receiving real-time updates every 0.5 seconds...';
-            messageCount = 0;
+            document.getElementById('textOutput').innerHTML = 'Select an MP4 audio file and click "Transcribe" to begin.';
         }
 
-        // Clean up on page unload
         window.addEventListener('beforeunload', function() {
             if (eventSource) {
                 eventSource.close();
