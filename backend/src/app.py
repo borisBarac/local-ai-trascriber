@@ -2,13 +2,13 @@ import asyncio
 import os
 import shutil
 import uuid
-from fastapi import FastAPI, Request, UploadFile, File
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 import json
 from contextlib import asynccontextmanager
 from .model import setup_transcription_pipeline
-from .transcribe import transcribe_audio_stream
+from .transcribe import transcribe_audio_stream, kill_transcription
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "../templates")
@@ -59,8 +59,21 @@ async def transcribe_audio(file: UploadFile = File(...)):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Transcription-Id": transcription_id,
         },
     )
+
+
+@app.post("/kill_transcription/{transcription_id}")
+async def kill_transcription_endpoint(transcription_id: str):
+    try:
+        kill_transcription(transcription_id)
+        return {
+            "status": "success",
+            "message": f"Transcription {transcription_id} killed.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

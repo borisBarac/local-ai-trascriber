@@ -109,11 +109,13 @@
         </div>
          <div class="controls">
             <button id="clearBtn" onclick="clearOutput()">Clear Output</button>
+            <button id="stopBtn" onclick="stopTranscription()" disabled>Stop</button>
         </div>
     </div>
 
     <script>
         let eventSource = null;
+        let transcriptionId = null; // Store the transcription id
 
         function transcribeAudio() {
             const fileInput = document.getElementById('audioFileInput');
@@ -135,6 +137,7 @@
             formData.append("file", file);
 
             transcribeBtn.disabled = true;
+            document.getElementById('stopBtn').disabled = false;
             statusDiv.textContent = 'Uploading and processing...';
             statusDiv.className = 'status';
             outputDiv.innerHTML = '';
@@ -144,6 +147,7 @@
                 body: formData,
             })
             .then(response => {
+                transcriptionId = response.headers.get('X-Transcription-Id');
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 statusDiv.textContent = 'Transcribing...';
@@ -155,6 +159,8 @@
                             statusDiv.textContent = 'Transcription complete.';
                             statusDiv.className = 'status disconnected';
                             transcribeBtn.disabled = false;
+                            document.getElementById('stopBtn').disabled = true;
+                            transcriptionId = null;
                             return;
                         }
 
@@ -187,7 +193,40 @@
                 statusDiv.textContent = 'Error during transcription.';
                 statusDiv.className = 'status disconnected';
                 transcribeBtn.disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                transcriptionId = null;
             });
+        }
+
+        function stopTranscription() {
+            if (!transcriptionId) return;
+            fetch(`/kill_transcription/${transcriptionId}`, {
+                method: 'POST',
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    resetUI();
+                } else {
+                    alert('Failed to stop transcription.');
+                }
+            })
+            .catch(() => {
+                alert('Failed to stop transcription.');
+            });
+        }
+
+        function resetUI() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            transcriptionId = null;
+            document.getElementById('transcribeBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = 'Ready';
+            statusDiv.className = 'status disconnected';
         }
 
         function stopStream() {
@@ -195,9 +234,10 @@
                 eventSource.close();
                 eventSource = null;
             }
-            const transcribeBtn = document.getElementById('transcribeBtn');
+            document.getElementById('transcribeBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            transcriptionId = null;
             const statusDiv = document.getElementById('status');
-            transcribeBtn.disabled = false;
             statusDiv.textContent = 'Ready';
             statusDiv.className = 'status disconnected';
         }
@@ -209,6 +249,11 @@
         window.addEventListener('beforeunload', function() {
             if (eventSource) {
                 eventSource.close();
+            }
+            // Attempt to stop the transcription if it is running
+            if (transcriptionId) {
+                // Use navigator.sendBeacon for reliability on unload
+                navigator.sendBeacon(`/kill_transcription/${transcriptionId}`);
             }
         });
     </script>
