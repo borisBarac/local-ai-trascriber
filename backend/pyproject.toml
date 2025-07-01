@@ -16,5 +16,10 @@ dependencies = [
     "transformers",
     "torch",
     "ffmpeg-python",
-    "numpy"
+    "numpy",
+    "pytest",
+    "pytest-asyncio",
 ]
+
+[tool.setuptools.packages.find]
+exclude = ["templates*", "temp_audio*", "__pycache__*"]
