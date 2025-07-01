@@ -1,8 +1,9 @@
+import uuid
 import pytest
 import os
 from unittest.mock import patch, Mock
 import numpy as np
-from transcribe import transcribe_audio_stream
+from .transcribe import transcribe_audio_stream
 
 
 class TestTranscribeAudioStream:
@@ -21,14 +22,14 @@ class TestTranscribeAudioStream:
     @pytest.fixture
     def mock_transcribe_pipeline(self):
         """Mock the transcribe_pipeline to avoid loading the actual model."""
-        with patch("transcribe.transcribe_pipeline") as mock_pipeline:
+        with patch("src.transcribe.transcribe_pipeline") as mock_pipeline:
             mock_pipeline.return_value = {"text": "Hello world"}
             yield mock_pipeline
 
     @pytest.fixture
     def mock_ffmpeg_process(self):
         """Mock ffmpeg process for controlled testing."""
-        with patch("transcribe.ffmpeg") as mock_ffmpeg:
+        with patch("src.transcribe.ffmpeg") as mock_ffmpeg:
             mock_process = Mock()
             mock_process.stdout.read.side_effect = [
                 # First chunk - 2 seconds of dummy audio data
@@ -58,7 +59,10 @@ class TestTranscribeAudioStream:
         mock_transcribe_pipeline.side_effect = [{"text": "Hello"}, {"text": "world"}]
 
         results = []
-        async for text_chunk in transcribe_audio_stream(audio_file_path):
+        transcription_id = str(uuid.uuid4())
+        async for text_chunk in transcribe_audio_stream(
+            audio_file_path, transcription_id
+        ):
             results.append(text_chunk)
 
         # Verify results
@@ -92,7 +96,9 @@ class TestTranscribeAudioStream:
         ]
 
         results = []
-        async for text_chunk in transcribe_audio_stream(audio_file_path):
+        async for text_chunk in transcribe_audio_stream(
+            audio_file_path, str(uuid.uuid4())
+        ):
             results.append(text_chunk)
 
         # Verify only non-empty text is yielded
@@ -113,7 +119,9 @@ class TestTranscribeAudioStream:
         ]
 
         results = []
-        async for text_chunk in transcribe_audio_stream(audio_file_path):
+        async for text_chunk in transcribe_audio_stream(
+            audio_file_path, str(uuid.uuid4())
+        ):
             results.append(text_chunk)
 
         # Verify only non-whitespace text is yielded
@@ -127,14 +135,16 @@ class TestTranscribeAudioStream:
         """Test transcription with non-existent file."""
         non_existent_file = "/path/to/non/existent/file.wav"
 
-        with patch("transcribe.ffmpeg") as mock_ffmpeg:
+        with patch("src.transcribe.ffmpeg") as mock_ffmpeg:
             # Simulate ffmpeg error for non-existent file
             mock_ffmpeg.input.return_value.output.return_value.run_async.side_effect = (
                 Exception("File not found")
             )
 
             results = []
-            async for text_chunk in transcribe_audio_stream(non_existent_file):
+            async for text_chunk in transcribe_audio_stream(
+                non_existent_file, str(uuid.uuid4())
+            ):
                 results.append(text_chunk)
 
             # Should yield error message
@@ -152,13 +162,16 @@ class TestTranscribeAudioStream:
         mock_transcribe_pipeline.side_effect = Exception("Pipeline processing error")
 
         results = []
-        async for text_chunk in transcribe_audio_stream(audio_file_path):
+        async for text_chunk in transcribe_audio_stream(
+            audio_file_path, str(uuid.uuid4())
+        ):
             results.append(text_chunk)
 
-        # Should yield error message
-        assert len(results) == 1
-        assert results[0].startswith("[ERROR:")
-        assert "Pipeline processing error" in results[0]
+        # Should yield an error message for each chunk
+        assert len(results) == 2
+        for result in results:
+            assert result.startswith("[TRANSCRIPTION_ERROR:")
+            assert "Pipeline processing error" in result
 
     @pytest.mark.asyncio
     async def test_transcribe_audio_stream_audio_processing(
@@ -179,7 +192,9 @@ class TestTranscribeAudioStream:
         mock_transcribe_pipeline.return_value = {"text": "Test"}
 
         results = []
-        async for text_chunk in transcribe_audio_stream(audio_file_path):
+        async for text_chunk in transcribe_audio_stream(
+            audio_file_path, str(uuid.uuid4())
+        ):
             results.append(text_chunk)
 
         # Verify the pipeline was called with correct audio format
@@ -202,13 +217,18 @@ class TestTranscribeAudioStream:
         mock_transcribe_pipeline.return_value = {"text": "Test"}
 
         results = []
-        async for text_chunk in transcribe_audio_stream(audio_file_path):
+        async for text_chunk in transcribe_audio_stream(
+            audio_file_path, str(uuid.uuid4())
+        ):
             results.append(text_chunk)
 
         # Verify pipeline call parameters
         args, kwargs = mock_transcribe_pipeline.call_args
         assert kwargs["batch_size"] == 1
-        assert kwargs["generate_kwargs"] == {"task": "transcribe"}
+        assert kwargs["generate_kwargs"] == {
+            "task": "transcribe",
+            "language": "english",
+        }
 
     @pytest.mark.asyncio
     async def test_transcribe_audio_stream_real_file(self, audio_file_path):
@@ -221,7 +241,9 @@ class TestTranscribeAudioStream:
         results = []
         chunk_count = 0
 
-        async for text_chunk in transcribe_audio_stream(audio_file_path):
+        async for text_chunk in transcribe_audio_stream(
+            audio_file_path, str(uuid.uuid4())
+        ):
             results.append(text_chunk)
             chunk_count += 1
             # Limit chunks to avoid long test times
