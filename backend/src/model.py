@@ -2,8 +2,9 @@ import os
 import logging
 import numpy as np
 import torch
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
-from transformers.utils import is_flash_attn_2_available
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+from transformers.pipelines import pipeline
+from transformers.utils.import_utils import is_flash_attn_2_available
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
