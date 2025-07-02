@@ -9,10 +9,13 @@ import json
 from contextlib import asynccontextmanager
 from .model import setup_transcription_pipeline
 from .transcribe import transcribe_audio_stream, kill_transcription
+from .llm_fixer import build_correction_chain, correct_transcription_stream
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATES_DIR = os.path.join(BASE_DIR, "../templates")
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+llm_fix = True
 
 UPLOAD_DIR = "temp_audio"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -41,17 +44,34 @@ async def home(request: Request):
 
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    filename = file.filename or f"upload_{uuid.uuid4()}.bin"
+    file_path = os.path.join(UPLOAD_DIR, filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     transcription_id = str(uuid.uuid4())
+    correction_chain = build_correction_chain()
 
     async def stream_transcription():
-        async for text_chunk in transcribe_audio_stream(file_path, transcription_id):
-            yield f"data: {json.dumps({'text': text_chunk})}\n\n"
-        yield f"data: {json.dumps({'text': '[STREAM ENDED]', 'end': True})}\n\n"
-        # Clean up the uploaded file
-        os.remove(file_path)
+        try:
+            if llm_fix:
+                async for text_chunk in correct_transcription_stream(
+                    transcribe_audio_stream(file_path, transcription_id),
+                    correction_chain,
+                    None,
+                    1.5,
+                ):
+                    yield f"data: {json.dumps({'text': text_chunk})}\n\n"
+            else:
+                async for text_chunk in transcribe_audio_stream(
+                    file_path, transcription_id
+                ):
+                    yield f"data: {json.dumps({'text': text_chunk})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e), 'end': True})}\n\n"
+        finally:
+            # Clean up the uploaded file after streaming is done or on error
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
     return StreamingResponse(
         stream_transcription(),
@@ -74,9 +94,3 @@ async def kill_transcription_endpoint(transcription_id: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)

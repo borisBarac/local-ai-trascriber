@@ -12,13 +12,16 @@ dependencies = [
     "uvicorn[standard]",
     "jinja2",
     "python-multipart",
-    "httpx",
     "transformers",
     "torch",
     "ffmpeg-python",
     "numpy",
     "pytest",
     "pytest-asyncio",
+    "langchain-core>=0.3.67",
+    "langchain-community>=0.3.26",
+    "langchain-openai>=0.3.27",
+    "langchain-ollama>=0.3.3",
 ]
 
 [tool.setuptools.packages.find]

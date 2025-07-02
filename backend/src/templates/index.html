@@ -5,21 +5,44 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Audio Transcription Demo</title>
     <style>
+        :root {
+            --bg-color: #f5f5f5;
+            --text-color: #333;
+            --container-bg: white;
+            --button-bg: #007bff;
+            --button-hover-bg: #0056b3;
+            --status-connected: #28a745;
+            --status-disconnected: #dc3545;
+            --text-output-bg: #f8f9fa;
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --container-bg: #1e1e1e;
+            --button-bg: #1a73e8;
+            --button-hover-bg: #135abf;
+            --status-connected: #34c759;
+            --status-disconnected: #ff3b30;
+            --text-output-bg: #2c2c2c;
+        }
+
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
-            background-color: #f5f5f5;
+            background-color: var(--bg-color);
+            color: var(--text-color);
         }
         .container {
-            background: white;
+            background: var(--container-bg);
             border-radius: 10px;
             padding: 30px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         h1 {
-            color: #333;
+            color: var(--text-color);
             text-align: center;
             margin-bottom: 30px;
         }
@@ -28,7 +51,7 @@
             margin-bottom: 20px;
         }
         button {
-            background-color: #007bff;
+            background-color: var(--button-bg);
             color: white;
             border: none;
             padding: 10px 20px;
@@ -38,7 +61,7 @@
             margin: 0 10px;
         }
         button:hover {
-            background-color: #0056b3;
+            background-color: var(--button-hover-bg);
         }
         button:disabled {
             background-color: #ccc;
@@ -50,10 +73,10 @@
             font-weight: bold;
         }
         .status.connected {
-            color: #28a745;
+            color: var(--status-connected);
         }
         .status.disconnected {
-            color: #dc3545;
+            color: var(--status-disconnected);
         }
         .text-output {
             border: 2px solid #ddd;
@@ -62,7 +85,7 @@
             min-height: 300px;
             max-height: 500px;
             overflow-y: auto;
-            background-color: #f8f9fa;
+            background-color: var(--text-output-bg);
             font-family: 'Courier New', monospace;
             white-space: pre-wrap;
             line-height: 1.5;
@@ -110,6 +133,13 @@
          <div class="controls">
             <button id="clearBtn" onclick="clearOutput()">Clear Output</button>
             <button id="stopBtn" onclick="stopTranscription()" disabled>Stop</button>
+        </div>
+
+        <div class="theme-switcher" style="text-align: center; margin-bottom: 20px;">
+            <label>
+                <input type="checkbox" id="themeToggle" onchange="toggleTheme()">
+                Dark Mode
+            </label>
         </div>
     </div>
 
@@ -244,6 +274,11 @@
 
         function clearOutput() {
             document.getElementById('textOutput').innerHTML = 'Select an MP4 audio file and click "Transcribe" to begin.';
+        }
+
+        function toggleTheme() {
+            const isDarkMode = document.getElementById('themeToggle').checked;
+            document.documentElement.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
         }
 
         window.addEventListener('beforeunload', function() {
