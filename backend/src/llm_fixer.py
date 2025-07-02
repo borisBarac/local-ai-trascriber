@@ -1,4 +1,5 @@
-from typing import AsyncGenerator, Callable, Optional
+import asyncio
+from typing import AsyncGenerator, Callable
 from langchain_openai import ChatOpenAI
 from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.output_parsers import StrOutputParser
@@ -6,6 +7,7 @@ import os
 from dotenv import load_dotenv
 from pydantic import SecretStr
 from enum import Enum
+import logging
 
 load_dotenv()
 
@@ -32,6 +34,9 @@ elif MODEL_TYPE == ModelType.OPENAI:
 else:
     raise ValueError(f"Unsupported MODEL_TYPE: {MODEL_TYPE}. Use 'ollama' or 'openai'.")
 
+# Initialize logger
+logger = logging.getLogger("llm_fixer")
+
 # Example n-shot prompt examples
 N_SHOT_EXAMPLES = [
     {
@@ -49,129 +54,69 @@ N_SHOT_EXAMPLES = [
 ]
 
 
-# Build the correction chain: LLM + output parser with n-shot prompt
-def build_correction_chain() -> Callable[[str], AsyncGenerator[str, None]]:
-    parser = StrOutputParser()
+def create_corrector(
+    model_type: ModelType | None = None,
+    examples: list | None = None,
+    system_prompt: str | None = None,
+) -> Callable[[str], AsyncGenerator[str, None]]:
+    """Factory function to create a corrector with custom options."""
+    _model_type = model_type or MODEL_TYPE
+    _examples = examples or N_SHOT_EXAMPLES
+    _system_prompt = system_prompt or (
+        "You are an expert transcription corrector. "
+        "Fix any transcription errors, improve grammar, and make the text more natural. "
+        "Return ONLY the corrected text without any explanations or additional formatting."
+    )
 
-    def build_n_shot_prompt(text: str) -> str:
-        examples = "\n".join(
-            f"Transcript: {ex['input']}\nCorrected: {ex['output']}"
-            for ex in N_SHOT_EXAMPLES
+    async def corrector(text: str) -> AsyncGenerator[str, None]:
+        examples_text = "\n".join(
+            f"Transcript: {ex['input']}\nCorrected: {ex['output']}" for ex in _examples
         )
         prompt = (
-            "You are an expert transcription corrector. "
-            "Given the following possibly error-prone transcript chunk, "
-            "fix any transcription errors, improve grammar, and make the text more natural. "
-            "Return only the improved text.\n\n"
-            f"{examples}\n"
-            f"Transcript: {text}\nCorrected: "
+            f"{_system_prompt}\n\n"
+            f"Examples:\n{examples_text}\n\n"
+            f"Now correct this transcript:\n"
+            f"Transcript: {text}\nCorrected:"
         )
-        return prompt
-
-    async def correction_chain(text: str) -> AsyncGenerator[str, None]:
-        prompt = build_n_shot_prompt(text)
-        if MODEL_TYPE == ModelType.OLLAMA:
-            async for chunk in llm.astream(prompt):
-                yield str(chunk)
-        else:
-            async for chunk in (llm | parser).astream(prompt):
-                yield chunk
-
-    return correction_chain
-
-
-async def correct_transcription_stream(
-    transcription_stream: Optional[AsyncGenerator[str, None]],
-    correction_chain: Callable[[str], AsyncGenerator[str, None]],
-    buffer: Optional[str] = None,
-    debounce_delay: float = 1.0,  # Seconds to wait for a pause in transcription
-) -> AsyncGenerator[str, None]:
-    """
-    A more robust stream processor that debounces the input.
-
-    It collects incoming text chunks and only processes them after there has
-    been a pause in the stream for `debounce_delay` seconds. This is more
-    efficient for live transcription as it sends more complete thoughts to
-    the LLM instead of processing every tiny chunk.
-    """
-    import asyncio
-
-    if buffer is not None:
-        # If a static buffer is provided, process it directly without debouncing.
-        async for corrected in correction_chain(buffer):
-            yield corrected
-        return
-
-    if transcription_stream is None:
-        raise ValueError("Either transcription_stream or buffer must be provided.")
-
-    # If debounce_delay is 0, process each chunk individually (for test compatibility)
-    if debounce_delay == 0:
-        async for chunk in transcription_stream:
-            if chunk and isinstance(chunk, str):
-                async for corrected in correction_chain(chunk):
-                    yield corrected
-        return
-
-    output_queue = asyncio.Queue()
-    debounce_buffer: list[str] = []
-    processing_task: Optional[asyncio.Task] = None
-
-    async def process_and_empty_buffer():
-        """Processes the current buffer and puts the result on the output queue."""
-        nonlocal debounce_buffer
-        if not debounce_buffer:
-            return
-
-        text_to_correct = "".join(debounce_buffer)
-        debounce_buffer = []  # Clear buffer for the next batch
 
         try:
-            async for corrected_chunk in correction_chain(text_to_correct):
-                await output_queue.put(corrected_chunk)
-        except Exception as e:
-            await output_queue.put(f"[CORRECTION_ERROR: {e}]")
-
-    async def stream_consumer():
-        """Reads from the input stream and manages the debouncing logic."""
-        nonlocal processing_task
-        try:
-            async for chunk in transcription_stream:
-                if chunk and isinstance(chunk, str):
-                    debounce_buffer.append(chunk)
-
-                    if processing_task:
-                        processing_task.cancel()
-
-                    async def delayed_processing():
-                        await asyncio.sleep(debounce_delay)
-                        await process_and_empty_buffer()
-
-                    processing_task = asyncio.create_task(delayed_processing())
-        finally:
-            # After the stream ends, ensure the final buffer is processed.
-            if processing_task and not processing_task.done():
-                try:
-                    await processing_task
-                except asyncio.CancelledError:
-                    await process_and_empty_buffer()
+            if _model_type == ModelType.OLLAMA:
+                async for chunk in llm.astream(prompt):
+                    if chunk and str(chunk).strip():
+                        yield str(chunk)
             else:
-                await process_and_empty_buffer()
+                parser = StrOutputParser()
+                async for chunk in (llm | parser).astream(prompt):
+                    if chunk and chunk.strip():
+                        yield chunk
+        except Exception as e:
+            logger.error(f"Error in factory corrector: {e}")
+            yield f"[CORRECTION_ERROR: {e}]"
 
-            await output_queue.put(None)  # Sentinel to signal the end
-
-    # Start the consumer task in the background.
-    asyncio.create_task(stream_consumer())
-
-    # Yield corrected chunks from the output queue.
-    while True:
-        item = await output_queue.get()
-        if item is None:
-            break
-        yield item
+    return corrector
 
 
-# Usage:
-# correction_chain = build_correction_chain()
-# async for fixed in correct_transcription_stream(transcription_stream, correction_chain):
-#     print(fixed, end="", flush=True)
+# Current implementation using Option 3: Factory pattern
+def build_correction_chain() -> Callable[[str], AsyncGenerator[str, None]]:
+    """Returns a factory-created corrector with default settings."""
+    return create_corrector()
+
+
+async def fix_text(text: str) -> str:
+    correction_chain = build_correction_chain()
+    corrected_text = []
+
+    async for chunk in correction_chain(text):
+        corrected_text.append(chunk)
+        print(f"Chunk: {chunk}")
+    return "".join(corrected_text).strip()
+
+
+async def _fake_main():
+    text = "An Intersting Txt With Speling And Fornat Errors"
+    corrected_text = await fix_text(text)
+    print(f"Original: {text}")
+    print(f"Corrected: {corrected_text}")
+
+
+# asyncio.run(_fake_main())

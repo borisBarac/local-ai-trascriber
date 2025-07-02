@@ -15,7 +15,7 @@ if ! command -v pytest &> /dev/null; then
     exit 1
 fi
 
-if pytest src/test_*.py -v --tb=short; then
+if pytest src/tests/test_*.py -v --tb=short; then
     echo "\n✅ All tests passed!"
     exit 0
 else

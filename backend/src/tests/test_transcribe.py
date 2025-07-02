@@ -3,7 +3,7 @@ import pytest
 import os
 from unittest.mock import patch, Mock
 import numpy as np
-from .transcribe import transcribe_audio_stream
+from ..transcribe import transcribe_audio_stream
 
 
 class TestTranscribeAudioStream:
@@ -66,9 +66,10 @@ class TestTranscribeAudioStream:
             results.append(text_chunk)
 
         # Verify results
-        assert len(results) == 2
+        assert len(results) == 3  # 2 chunks + stream end marker
         assert results[0] == "Hello "
         assert results[1] == "world "
+        assert results[2] == "###STREAM_END###"
 
         # Verify ffmpeg was called correctly
         mock_ffmpeg.input.assert_called_once_with(audio_file_path)
@@ -102,8 +103,9 @@ class TestTranscribeAudioStream:
             results.append(text_chunk)
 
         # Verify only non-empty text is yielded
-        assert len(results) == 1
+        assert len(results) == 2  # valid text + stream end marker
         assert results[0] == "Valid text "
+        assert results[1] == "###STREAM_END###"
 
     @pytest.mark.asyncio
     async def test_transcribe_audio_stream_with_whitespace_only(
@@ -125,8 +127,9 @@ class TestTranscribeAudioStream:
             results.append(text_chunk)
 
         # Verify only non-whitespace text is yielded
-        assert len(results) == 1
+        assert len(results) == 2  # real content + stream end marker
         assert results[0] == "Real content "
+        assert results[1] == "###STREAM_END###"
 
     @pytest.mark.asyncio
     async def test_transcribe_audio_stream_file_not_found(
@@ -167,11 +170,13 @@ class TestTranscribeAudioStream:
         ):
             results.append(text_chunk)
 
-        # Should yield an error message for each chunk
-        assert len(results) == 2
-        for result in results:
-            assert result.startswith("[TRANSCRIPTION_ERROR:")
-            assert "Pipeline processing error" in result
+        # Should yield an error message for each chunk and stream end marker
+        assert len(results) == 3
+        assert results[0].startswith("[TRANSCRIPTION_ERROR:")
+        assert "Pipeline processing error" in results[0]
+        assert results[1].startswith("[TRANSCRIPTION_ERROR:")
+        assert "Pipeline processing error" in results[1]
+        assert results[2] == "###STREAM_END###"
 
     @pytest.mark.asyncio
     async def test_transcribe_audio_stream_audio_processing(

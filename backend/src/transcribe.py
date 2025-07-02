@@ -29,6 +29,8 @@ TRANSCRIPTION_LOCK = threading.Lock()
 
 transcribe_pipeline, device, torch_dtype, np_dtype = setup_transcription_pipeline()
 
+STREAM_END_MARKER = "###STREAM_END###"
+
 
 # --- Transcription Generator ---
 async def transcribe_audio_stream(file_path: str, transcription_id: str):
@@ -116,6 +118,7 @@ async def transcribe_audio_stream(file_path: str, transcription_id: str):
                     timeout=CHUNK_TIMEOUT,
                 )
                 if not in_bytes:
+                    yield STREAM_END_MARKER
                     break
 
                 audio_array = (

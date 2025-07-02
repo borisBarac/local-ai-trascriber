@@ -1,14 +1,16 @@
 # Transcriber
 
-### Using Whisper running in local setup in [PyThorch](http://pytorch.org/)
+### Using Ollama and Whisper running locally with [PyTorch](http://pytorch.org/)
 
-Transcriber is a project designed to transcribe audio files into text using a Python backend. The project is organized into frontend and backend components, with the backend providing the core transcription logic and API endpoints.
+Transcriber is a project designed to transcribe audio files into text using a Python backend.
+Transcription and LLM-based optimization of the transcription are performed locally using Ollama.
+The project makes extensive use of coroutines, and transcription tasks can be cancelled at any time.
 
 ## Features
 
-- Audio file upload and transcription with streaming
-- GPU optimized
-- Running the models locally
+- Audio file upload and real-time transcription streaming
+- GPU acceleration
+- All models run locally
 
 ## Getting Started
 
@@ -34,7 +36,7 @@ Transcriber is a project designed to transcribe audio files into text using a Py
 
 ### Frontend
 
-- Open `app.index.html` in your browser, or deploy using the provided Dockerfile in `infra/Dockerfile.frontend`.
+- Open `app.index.html` in your browser, or deploy using the provided Dockerfile at `infra/Dockerfile.frontend`.
 
 ### Running Tests
 

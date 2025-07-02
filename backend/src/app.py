@@ -8,14 +8,16 @@ from fastapi.templating import Jinja2Templates
 import json
 from contextlib import asynccontextmanager
 from .model import setup_transcription_pipeline
-from .transcribe import transcribe_audio_stream, kill_transcription
-from .llm_fixer import build_correction_chain, correct_transcription_stream
+from .transcribe import (
+    STREAM_END_MARKER,
+    transcribe_audio_stream,
+    kill_transcription,
+)
+from .llm_fixer import build_correction_chain
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
-
-llm_fix = True
 
 UPLOAD_DIR = "temp_audio"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -49,23 +51,27 @@ async def transcribe_audio(file: UploadFile = File(...)):
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     transcription_id = str(uuid.uuid4())
-    correction_chain = build_correction_chain()
+    chunks: list[str] = []
+    corrected_chunks: list[str] = []
+
+    async def fix_text_stream(text_to_fix: str):
+        chain = build_correction_chain()
+        yield "\nCorrected text:\n"
+        async for chunk in chain(text_to_fix):
+            yield chunk
+            corrected_chunks.append(chunk)
 
     async def stream_transcription():
         try:
-            if llm_fix:
-                async for text_chunk in correct_transcription_stream(
-                    transcribe_audio_stream(file_path, transcription_id),
-                    correction_chain,
-                    None,
-                    1.5,
-                ):
+            async for text_chunk in transcribe_audio_stream(
+                file_path, transcription_id
+            ):
+                if text_chunk != STREAM_END_MARKER:
+                    chunks.append(text_chunk)
                     yield f"data: {json.dumps({'text': text_chunk})}\n\n"
-            else:
-                async for text_chunk in transcribe_audio_stream(
-                    file_path, transcription_id
-                ):
-                    yield f"data: {json.dumps({'text': text_chunk})}\n\n"
+                else:
+                    async for corrected_chunk in fix_text_stream("".join(chunks)):
+                        yield f"data: {json.dumps({'text': corrected_chunk})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e), 'end': True})}\n\n"
         finally:
