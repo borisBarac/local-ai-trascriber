@@ -12,6 +12,10 @@ The project makes extensive use of coroutines, and transcription tasks can be ca
 - GPU acceleration
 - All models run locally
 
+## Demo
+
+![Demo](video.gif)
+
 ## Getting Started
 
 ### Backend
