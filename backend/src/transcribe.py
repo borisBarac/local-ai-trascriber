@@ -4,7 +4,7 @@ import ffmpeg
 import numpy as np
 import asyncio
 
-from .model import setup_transcription_pipeline
+from .model import setup_transcription_pipeline, _PIPELINE_CACHE
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -12,36 +12,58 @@ logger = logging.getLogger(__name__)
 
 # --- Audio Configuration ---
 AUDIO_SAMPLE_RATE = 16000
-# Bytes to read from ffmpeg stdout. Corresponds to ~1.28s of 16-bit mono 16kHz audio.
 AUDIO_CHUNK_BYTES = 4096 * 10
-# Number of seconds of audio to buffer before transcribing.
-# Whisper works best on segments of 5-30 seconds.
 TARGET_BUFFER_SECONDS = 5
-# Minimum audio length in samples to process (0.1s)
 MIN_AUDIO_SAMPLES = AUDIO_SAMPLE_RATE // 10
 
 
-CHUNK_TIMEOUT = 30  # Timeout for reading audio chunks (seconds)
-TRANSCRIPTION_TIMEOUT = 60  # Timeout for transcription processing (seconds)
+CHUNK_TIMEOUT = 30
+TRANSCRIPTION_TIMEOUT = 60
 
 TRANSCRIPTION_PROCESSES = {}
 TRANSCRIPTION_LOCK = threading.Lock()
 
-transcribe_pipeline, device, torch_dtype, np_dtype = setup_transcription_pipeline()
+BACKEND_TYPE = None
+MLX_MODEL_ID = None
+transcribe_pipeline = None
+device = None
+torch_dtype = None
+np_dtype = None
 
 STREAM_END_MARKER = "###STREAM_END###"
 
 
+def _ensure_pipeline_loaded():
+    global BACKEND_TYPE, MLX_MODEL_ID, transcribe_pipeline, device, torch_dtype, np_dtype
+    if BACKEND_TYPE is not None:
+        return
+    backend_info = setup_transcription_pipeline()
+    BACKEND_TYPE = backend_info[0]
+    if BACKEND_TYPE == "mlx":
+        MLX_MODEL_ID = backend_info[1]
+    else:
+        transcribe_pipeline = backend_info[0]
+        device = backend_info[1]
+        torch_dtype = backend_info[2]
+        np_dtype = backend_info[3]
+
+
+def _transcribe_mlx_sync(audio_array):
+    import mlx_whisper
+    return mlx_whisper.transcribe(
+        audio_array,
+        path_or_hf_repo=MLX_MODEL_ID,
+        language="en",
+        task="transcribe",
+    )
+
+
 # --- Transcription Generator ---
 async def transcribe_audio_stream(file_path: str, transcription_id: str):
-    """
-    Reads an audio file, converts it to a 16kHz mono stream, buffers it into
-    larger segments, and yields transcribed text chunks for higher accuracy.
-    """
-    logger.info(f"Starting transcription for: {file_path} (ID: {transcription_id})")
+    _ensure_pipeline_loaded()
+    logger.info(f"Starting transcription for: {file_path} (ID: {transcription_id}) [backend={BACKEND_TYPE}]")
     ffmpeg_process = None
     try:
-        # Use ffmpeg to read the audio and convert it
         ffmpeg_process = (
             ffmpeg.input(file_path)
             .output(
@@ -49,21 +71,18 @@ async def transcribe_audio_stream(file_path: str, transcription_id: str):
                 format="s16le",
                 acodec="pcm_s16le",
                 ac=1,
-                ar="16k",  # Use '16k' to match test expectation
+                ar="16k",
             )
             .run_async(pipe_stdout=True, pipe_stderr=True)
         )
-        # Register process by ID
         with TRANSCRIPTION_LOCK:
             TRANSCRIPTION_PROCESSES[transcription_id] = ffmpeg_process
 
-        # Get event loop for async operations
         loop = asyncio.get_event_loop()
         audio_buffer = []
         target_buffer_samples = TARGET_BUFFER_SECONDS * AUDIO_SAMPLE_RATE
 
         async def transcribe_buffer(buffer_to_process):
-            """Helper to transcribe a buffer and handle errors."""
             if not buffer_to_process:
                 return ""
 
@@ -73,26 +92,33 @@ async def transcribe_audio_stream(file_path: str, transcription_id: str):
                 return ""
 
             try:
-                # Run transcription with timeout protection
-                outputs = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda: transcribe_pipeline(
-                            {
-                                "raw": full_audio,
-                                "sampling_rate": AUDIO_SAMPLE_RATE,
-                            },  # Pass as dict for test compatibility
-                            batch_size=1,
-                            generate_kwargs={
-                                "task": "transcribe",
-                                "language": "english",
-                            },
+                if BACKEND_TYPE == "mlx":
+                    outputs = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda: _transcribe_mlx_sync(full_audio),
                         ),
-                    ),
-                    timeout=TRANSCRIPTION_TIMEOUT,
-                )
-                text = outputs["text"].strip()  # type: ignore
-                # Only yield non-empty, non-whitespace text
+                        timeout=TRANSCRIPTION_TIMEOUT,
+                    )
+                else:
+                    outputs = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda: transcribe_pipeline(
+                                {
+                                    "raw": full_audio,
+                                    "sampling_rate": AUDIO_SAMPLE_RATE,
+                                },
+                                batch_size=1,
+                                generate_kwargs={
+                                    "task": "transcribe",
+                                    "language": "english",
+                                },
+                            ),
+                        ),
+                        timeout=TRANSCRIPTION_TIMEOUT,
+                    )
+                text = outputs["text"].strip()
                 if text.strip():
                     return text + " "
                 else:

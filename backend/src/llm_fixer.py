@@ -4,6 +4,8 @@ from langchain_openai import ChatOpenAI
 from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.output_parsers import StrOutputParser
 import os
+import urllib.request
+import urllib.error
 from dotenv import load_dotenv
 from pydantic import SecretStr
 from enum import Enum
@@ -110,6 +112,32 @@ async def fix_text(text: str) -> str:
         corrected_text.append(chunk)
         print(f"Chunk: {chunk}")
     return "".join(corrected_text).strip()
+
+
+def check_ollama_connection():
+    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    try:
+        req = urllib.request.Request(f"{ollama_host}/api/tags")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            import json as _json
+            data = _json.loads(resp.read().decode())
+            models = [m.get("name", "") for m in data.get("models", [])]
+            model_available = any(OLLAMA_MODEL in m for m in models)
+            return {
+                "connected": True,
+                "model": OLLAMA_MODEL,
+                "model_available": model_available,
+                "models_available": models,
+            }
+    except Exception as e:
+        logger.warning(f"Ollama connection check failed: {e}")
+        return {
+            "connected": False,
+            "model": OLLAMA_MODEL,
+            "model_available": False,
+            "models_available": [],
+            "error": str(e),
+        }
 
 
 async def _fake_main():

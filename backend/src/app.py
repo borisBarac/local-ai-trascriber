@@ -13,7 +13,7 @@ from .transcribe import (
     transcribe_audio_stream,
     kill_transcription,
 )
-from .llm_fixer import build_correction_chain
+from .llm_fixer import build_correction_chain, check_ollama_connection, MODEL_TYPE
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
@@ -22,18 +22,20 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 UPLOAD_DIR = "temp_audio"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+MODEL_READY = False
 
-# cache the pipeline before we start the app
-async def preload_pipeline():
+
+async def _load_model_background():
+    global MODEL_READY
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, setup_transcription_pipeline)
+    MODEL_READY = True
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await preload_pipeline()
+    asyncio.create_task(_load_model_background())
     yield
-    # Clean up resources if needed
 
 
 app = FastAPI(lifespan=lifespan)
@@ -44,8 +46,26 @@ async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/api/health/model")
+async def health_model():
+    return {"ready": MODEL_READY}
+
+
+@app.get("/api/health/ollama")
+async def health_ollama():
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, check_ollama_connection)
+    result["model_type"] = MODEL_TYPE.value
+    return result
+
+
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
+    if not MODEL_READY:
+        raise HTTPException(
+            status_code=503,
+            detail="Model is still loading. Please wait.",
+        )
     filename = file.filename or f"upload_{uuid.uuid4()}.bin"
     file_path = os.path.join(UPLOAD_DIR, filename)
     with open(file_path, "wb") as buffer:
@@ -68,14 +88,14 @@ async def transcribe_audio(file: UploadFile = File(...)):
             ):
                 if text_chunk != STREAM_END_MARKER:
                     chunks.append(text_chunk)
-                    yield f"data: {json.dumps({'text': text_chunk})}\n\n"
+                    yield f"data: {json.dumps({'text': text_chunk, 'phase': 'transcribing'})}\n\n"
                 else:
                     async for corrected_chunk in fix_text_stream("".join(chunks)):
-                        yield f"data: {json.dumps({'text': corrected_chunk})}\n\n"
+                        yield f"data: {json.dumps({'text': corrected_chunk, 'phase': 'correcting'})}\n\n"
+                    yield f"data: {json.dumps({'end': True})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e), 'end': True})}\n\n"
         finally:
-            # Clean up the uploaded file after streaming is done or on error
             if os.path.exists(file_path):
                 os.remove(file_path)
 

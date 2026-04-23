@@ -22,7 +22,8 @@ class TestTranscribeAudioStream:
     @pytest.fixture
     def mock_transcribe_pipeline(self):
         """Mock the transcribe_pipeline to avoid loading the actual model."""
-        with patch("src.transcribe.transcribe_pipeline") as mock_pipeline:
+        with patch("src.transcribe.BACKEND_TYPE", "pytorch"), \
+             patch("src.transcribe.transcribe_pipeline") as mock_pipeline:
             mock_pipeline.return_value = {"text": "Hello world"}
             yield mock_pipeline
 
